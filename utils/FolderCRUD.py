@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 from model.dbModels import Folder, FolderCreate, FolderResponse
 
@@ -7,6 +9,7 @@ def create_folder(db: Session, folder: FolderCreate, user_id: int):
         folder_name=folder.folder_name,
         description=folder.description,
         user_id=user_id,
+        created_at=datetime.now()  # Ensure the datetime is set
     )
     db.add(db_folder)
     db.commit()
