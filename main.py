@@ -370,6 +370,14 @@ def delete_bookmark(bookmark_id: int, db: Session = Depends(get_db), current_use
 
     return bookmark
 
+@app.delete("/bookmarks/", response_model=BookmarkResponse)
+def delete_bookmark(bookmark_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Retrieve the bookmark to delete
+    bookmark = db.query(Bookmark)
+    if not bookmark:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+    return bookmark
+
 
 
 @app.get("/folders/{folder_id}/bookmarks/", response_model=List[BookmarkResponse])

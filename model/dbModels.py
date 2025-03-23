@@ -89,6 +89,7 @@ class Bookmark(Base):
     folder = relationship("Folder", back_populates="bookmarks")
 
 class BookmarkResponse(BaseModel):
+    bookmark_id: int
     recipe_id: int
     user_id: int
     rating: int
