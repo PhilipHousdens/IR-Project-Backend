@@ -91,7 +91,6 @@ class BookmarkResponse(BaseModel):
     user_id: int
     rating: int
     folder_id: int  # Optional if needed, you can link to the Folder
-    folder_name: str  # Optional if you want to return the folder name
 
     class Config:
         orm_mode = True  # This ensures the model is compatible with SQLAlchemy ORM objects
