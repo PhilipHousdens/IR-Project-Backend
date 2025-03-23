@@ -5,6 +5,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk, streaming_bulk
@@ -57,6 +58,19 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
     if user is None:
         raise credentials_exception
     return user
+
+
+def calculate_average_rating(db: Session, folder_id: int) -> float:
+    # Get all bookmarks in the folder
+    bookmarks = db.query(Bookmark).filter(Bookmark.folder_id == folder_id).all()
+
+    if not bookmarks:
+        return None  # No bookmarks, so average can't be calculated
+
+    # Calculate the average rating
+    total_rating = sum(bookmark.rating for bookmark in bookmarks)
+    average_rating = total_rating / len(bookmarks)
+    return average_rating
 
 
 # Endpoint to create the recipe index in Elasticsearch
@@ -311,6 +325,48 @@ def bookmark_recipe(
     db.add(bookmark)
     db.commit()
     db.refresh(bookmark)
+
+    # Recalculate the average rating for the folder
+    average_rating = calculate_average_rating(db, folder_id)
+
+    # Update the folder's average rating
+    folder.average_rating = average_rating
+    db.commit()
+    db.refresh(folder)
+
+    return bookmark
+
+
+@app.get("/bookmarks/", response_model=List[BookmarkResponse])
+def get_all_bookmarks(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Retrieve all bookmarks for the authenticated user.
+    """
+    bookmarks = db.query(Bookmark).filter(Bookmark.user_id == current_user.user_id).all()
+    return bookmarks
+
+@app.delete("/bookmarks/{bookmark_id}", response_model=BookmarkResponse)
+def delete_bookmark(bookmark_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Retrieve the bookmark to delete
+    bookmark = db.query(Bookmark).filter(Bookmark.bookmark_id == bookmark_id, Bookmark.user_id == current_user.user_id).first()
+    if not bookmark:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+
+    # Get the folder id from the bookmark
+    folder_id = bookmark.folder_id
+
+    # Delete the bookmark
+    db.delete(bookmark)
+    db.commit()
+
+    # Recalculate the average rating for the folder
+    average_rating = calculate_average_rating(db, folder_id)
+
+    # Update the folder's average rating
+    folder = db.query(Folder).filter(Folder.folder_id == folder_id).first()
+    if folder:
+        folder.average_rating = average_rating
+        db.commit()
 
     return bookmark
 

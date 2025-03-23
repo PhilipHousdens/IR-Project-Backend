@@ -1,7 +1,9 @@
 from datetime import datetime
+from typing import Optional, List
 
 from pydantic import BaseModel
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, Date, Boolean, DateTime
+from sqlalchemy.dialects.mysql import NUMERIC
 from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
@@ -90,10 +92,11 @@ class BookmarkResponse(BaseModel):
     recipe_id: int
     user_id: int
     rating: int
-    folder_id: int  # Optional if needed, you can link to the Folder
+    folder_id: Optional[int]  # Optional if needed, you can link to the Folder
 
     class Config:
         orm_mode = True  # This ensures the model is compatible with SQLAlchemy ORM objects
+
 
 class BookmarkRequest(BaseModel):
     recipe_id: int
@@ -109,6 +112,7 @@ class Folder(Base):
     folder_name = Column(String)
     description = Column(String)
     created_at = Column(DateTime, default=datetime)
+    average_rating = Column(NUMERIC, nullable=True)  # New column to store average rating
 
     #Relationships
     user = relationship("User", back_populates="folders")
@@ -123,6 +127,7 @@ class FolderResponse(BaseModel):
     folder_name: str
     description: str
     created_at: datetime
+    average_rating: Optional[float]
 
     class Config:
         orm_mode = True
