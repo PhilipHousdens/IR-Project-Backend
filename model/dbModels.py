@@ -1,5 +1,7 @@
+from datetime import datetime
+
 from pydantic import BaseModel
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Date, Boolean
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Date, Boolean, DateTime
 from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
@@ -50,6 +52,7 @@ class User(Base):
 
     # Use string reference for relationship
     bookmarks = relationship("Bookmark", back_populates="user") # Define in user.py
+    folders = relationship("Folder", back_populates="user")
 
 
 # Pydantic model for user creation
@@ -75,8 +78,52 @@ class Bookmark(Base):
     bookmark_id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.user_id'))  # ForeignKey referencing User's id without schema prefix
     recipe_id = Column(Integer, ForeignKey('recipes_tb.recipes.RecipeId'))  # ForeignKey referencing Recipe's id without schema prefix
+    folder_id = Column(Integer, ForeignKey('recipes_tb.folders.folder_id'))
     rating = Column(Integer)  # Rating between 1-5
 
     # Relationships
     user = relationship("User", back_populates="bookmarks")
     recipe = relationship("Recipe", back_populates="bookmarks")
+    folder = relationship("Folder", back_populates="bookmarks")
+
+class BookmarkResponse(BaseModel):
+    recipe_id: int
+    user_id: int
+    rating: int
+    folder_id: int  # Optional if needed, you can link to the Folder
+    folder_name: str  # Optional if you want to return the folder name
+
+    class Config:
+        orm_mode = True  # This ensures the model is compatible with SQLAlchemy ORM objects
+
+class BookmarkRequest(BaseModel):
+    recipe_id: int
+    folder_id: int
+    rating: float
+
+class Folder(Base):
+    __tablename__ = "folders"
+    __table_args__ = {'schema': 'recipes_tb'}
+
+    folder_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.user_id'))
+    folder_name = Column(String)
+    description = Column(String)
+    created_at = Column(DateTime, default=datetime)
+
+    #Relationships
+    user = relationship("User", back_populates="folders")
+    bookmarks = relationship("Bookmark", back_populates="folder")
+
+class FolderCreate(BaseModel):
+    folder_name: str
+    description: str
+
+class FolderResponse(BaseModel):
+    folder_id: int
+    folder_name: str
+    description: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True

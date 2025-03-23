@@ -1,4 +1,6 @@
 import os
+from typing import List
+
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,9 +10,11 @@ from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk, streaming_bulk
 from fastapi.security import OAuth2PasswordBearer
 from database.db import get_db
-from model.dbModels import Recipe, User, UserCreate, UserResponse
+from model.dbModels import Recipe, User, UserCreate, UserResponse, Folder, Bookmark, BookmarkResponse, BookmarkRequest
 from utils.passswordHash import hash_password, verify_password  # Assuming these functions are implemented
 from utils.JWTToken import verify_token, create_access_token
+from model.dbModels import FolderCreate, FolderResponse
+from utils.FolderCRUD import create_folder, get_folders, delete_folder
 
 app = FastAPI()
 
@@ -20,7 +24,8 @@ es = Elasticsearch("https://localhost:9200", basic_auth=("elastic", os.getenv("E
 # CORS configuration to allow frontend to communicate with the backend
 origins = [
     "http://localhost:5173",  # Add the URL where your frontend is served
-    "https://localhost:9200"
+    "https://localhost:9200",
+    "http://localhost:8080"
 ]
 
 app.add_middleware(
@@ -32,10 +37,12 @@ app.add_middleware(
 )
 
 # OAuth2PasswordBearer to handle token extraction
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 # Define a helper function to check the current user using JWT token
 def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+    print(f"Received token: {token}")
+    print(f"Secret Key being used: {os.getenv('SECRET_KEY')}")
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -44,10 +51,13 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
     payload = verify_token(token)
     if payload is None:
         raise credentials_exception
-    user = db.query(User).filter(User.id == payload.get("sub")).first()
+    print(f"Decoded Payload: {payload}")  # add this line.
+    user = db.query(User).filter(User.user_id == payload.get("sub")).first()
+    print(f"User from Database: {user}")  # add this line
     if user is None:
         raise credentials_exception
     return user
+
 
 # Endpoint to create the recipe index in Elasticsearch
 BATCH_SIZE = 5000  # Instead of loading 540,000 into memory
@@ -216,5 +226,104 @@ def login_for_access_token(form_data: LoginRequest, db: Session = Depends(get_db
         )
 
     # Create JWT token
-    access_token = create_access_token(data={"sub": user.user_id})
+    access_token = create_access_token(data={"sub": user.user_id, "name": user.username})
+    print(f"Access Token: {access_token}")  # Debugging line
+
     return {"access_token": access_token, "token_type": "bearer"}
+
+# Create a folder
+@app.post("/folders/", response_model=FolderResponse)
+def create_new_folder(folder: FolderCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return create_folder(db, folder, current_user.user_id)
+
+# Get all folders for a user
+@app.get("/folders/", response_model=List[FolderResponse])
+def get_user_folders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return get_folders(db, current_user.user_id)
+
+@app.get("/folders/{folder_id}/", response_model=FolderResponse)
+def get_folder_details(
+    folder_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    # Retrieve folder and associated bookmarks for a specific folder
+    folder = db.query(Folder).filter(Folder.folder_id == folder_id, Folder.user_id == current_user.user_id).first()
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found or you do not have permission to view it")
+
+    return folder
+
+# Delete a folder
+@app.delete("/folders/{folder_id}", response_model=FolderResponse)
+def delete_user_folder(folder_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    folder = delete_folder(db, folder_id, current_user.user_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    return folder
+
+
+@app.put("/folders/{folder_id}", response_model=FolderResponse)
+def update_folder(
+        folder_id: int,
+        folder: FolderCreate,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+):
+    # Check if the folder exists and belongs to the user
+    existing_folder = db.query(Folder).filter(Folder.folder_id == folder_id,
+                                              Folder.user_id == current_user.user_id).first()
+    if not existing_folder:
+        raise HTTPException(status_code=404, detail="Folder not found or you do not have permission to edit it")
+
+    # Update folder details
+    existing_folder.folder_name = folder.folder_name
+    existing_folder.description = folder.description
+    db.commit()
+    db.refresh(existing_folder)
+    return existing_folder
+
+# Bookmark
+@app.post("/bookmarks/", response_model=BookmarkResponse)
+def bookmark_recipe(
+    bookmark_data: BookmarkRequest,  # This will be passed as a JSON body
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Extract data from the request body
+    recipe_id = bookmark_data.recipe_id
+    folder_id = bookmark_data.folder_id
+    rating = bookmark_data.rating
+
+    if rating < 1 or rating > 5:
+        raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+
+    # Check if the folder exists and belongs to the user
+    folder = db.query(Folder).filter(Folder.folder_id == folder_id, Folder.user_id == current_user.user_id).first()
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found or you do not have permission to use this folder")
+
+    # Check if the recipe exists
+    recipe = db.query(Recipe).filter(Recipe.RecipeId == recipe_id).first()
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+
+    # Create bookmark
+    bookmark = Bookmark(user_id=current_user.user_id, recipe_id=recipe.RecipeId, rating=rating, folder_id=folder_id)
+    db.add(bookmark)
+    db.commit()
+    db.refresh(bookmark)
+
+    return bookmark
+
+
+
+@app.get("/folders/{folder_id}/bookmarks/", response_model=List[BookmarkResponse])
+def get_bookmarks_for_folder(
+    folder_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    folder = db.query(Folder).filter(Folder.folder_id == folder_id, Folder.user_id == current_user.user_id).first()
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found or you do not have permission to view bookmarks")
+
+    # Fetch bookmarks in the folder
+    bookmarks = db.query(Bookmark).filter(Bookmark.folder_id == folder_id).all()
+    return bookmarks
