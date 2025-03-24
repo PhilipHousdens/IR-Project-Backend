@@ -37,6 +37,9 @@ class Recipe(Base):
     RecipeServings = Column(Integer)
     RecipeYield = Column(String)
     RecipeInstructions = Column(String)
+    RecipeIngredientParts = Column(String)
+    RecipeIngredientQuantities = Column(String)
+
     image_link = Column(String)
     text = Column(String)
 

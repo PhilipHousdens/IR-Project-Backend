@@ -74,7 +74,7 @@ def calculate_average_rating(db: Session, folder_id: int) -> float:
 
 
 # Endpoint to create the recipe index in Elasticsearch
-BATCH_SIZE = 5000  # Instead of loading 540,000 into memory
+BATCH_SIZE = 50000  # Instead of loading 540,000 into memory
 
 
 @app.post("/run_indexer")
@@ -103,6 +103,8 @@ def run_indexer(db: Session = Depends(get_db)):
                         "image_link": recipe.image_link,
                         "Keywords": recipe.Keywords,
                         "RecipeInstructions": recipe.RecipeInstructions,
+                        "RecipeIngredientParts": recipe.RecipeIngredientParts,
+                        "RecipeIngredientQuantities": recipe.RecipeIngredientQuantities,
                     },
                 }
                 for recipe in recipes
@@ -116,6 +118,7 @@ def run_indexer(db: Session = Depends(get_db)):
                 else:
                     failed += 1
                     print(f"❌ Failed to index document: {response}")  # <-- Add this line
+                    print(f"Error Details: {response}")
 
             print(f"✅ Indexed {success} recipes, ❌ Failed {failed}")
 
@@ -143,11 +146,25 @@ def search_recipes(query: str = None, page: int = 1, size: int = 10):
             "query": {
                 "multi_match": {
                     "query": query,
-                    "fields": ["Name", "Description", "RecipeInstructions"],
+                    "fields": ["Name", "Description", "RecipeInstructions", "RecipeIngredientParts", "RecipeIngredientQuantities"],
                 }
             },
             "from": (page - 1) * size,  # Pagination start point
-            "size": size
+            "size": size,
+            "suggest": {
+                "text": query,  # Misspelled or incorrect query input
+                "simple_phrase": {
+                    "phrase": {
+                        "field": "Name",  # Field to suggest corrections for
+                        "size": 4,  # Only top suggestion
+                        "gram_size": 3,  # N-gram size for correction
+                        "direct_generator": [{
+                            "field": "Name",
+                            "suggest_mode": "always"
+                        }]
+                    }
+                }
+            }
         }
 
         response = es.search(index="recipes", body=es_query)
@@ -168,14 +185,17 @@ def create_recipes_index():
                 "Description": {"type": "text"},
                 "image_link": {"type": "keyword"},
                 "Keywords": {"type": "text"},
-                "RecipeInstructions": {"type": "text"}
+                "RecipeInstructions": {"type": "text"},
+                "RecipeIngredientsParts": {"type": "text"},
+                "RecipeIngredientsQuantities": {"type": "integer"},
             }
         }
     }
 
     try:
+        # Delete the existing index if it exists
         if es.indices.exists(index="recipes"):
-            return {"message": "Index already exists"}
+            es.indices.delete(index="recipes")
 
         response = es.indices.create(index="recipes", body=index_body)
         if response.get("acknowledged", False):
